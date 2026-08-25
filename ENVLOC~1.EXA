@@ -1,3 +1,0 @@
-# Copiar para .env.local depois de criar o projeto Supabase
-NEXT_PUBLIC_SUPABASE_URL=https://xxxxx.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=xxxxx
