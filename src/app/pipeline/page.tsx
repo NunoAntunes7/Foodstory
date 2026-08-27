@@ -179,9 +179,9 @@ export default function PipelinePage() {
           <Link href="/" className="text-xs text-[#6B6B76] hover:underline">← Início</Link>
           <h1 className="text-xl font-medium mt-1">Pipeline</h1>
         </div>
-        <button className="rounded-lg bg-brand-500 text-white text-sm font-medium px-4 h-9 hover:bg-brand-600 transition-colors">
+        <Link href="/pipeline/novo" className="rounded-lg bg-brand-500 text-white text-sm font-medium px-4 h-9 flex items-center hover:bg-brand-600 transition-colors">
           + Novo evento
-        </button>
+        </Link>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
@@ -253,6 +253,7 @@ export default function PipelinePage() {
               <th className="px-4 py-3 font-medium">Proveito</th>
               {colunasExtra.includes("N Evento") && <th className="px-4 py-3 font-medium">N Evento</th>}
               {colunasExtra.includes("F&B") && <th className="px-4 py-3 font-medium">F&amp;B</th>}
+              <th className="px-4 py-3 font-medium"></th>
             </tr>
           </thead>
           <tbody>
@@ -271,11 +272,14 @@ export default function PipelinePage() {
                 <td className="px-4 py-3 font-medium">{formatEUR(e.proveito)}</td>
                 {colunasExtra.includes("N Evento") && <td className="px-4 py-3 text-[#6B6B76]">{e.n_evento}</td>}
                 {colunasExtra.includes("F&B") && <td className="px-4 py-3 text-[#6B6B76]">{formatEUR(e.proveito)}</td>}
+                <td className="px-4 py-3 text-right">
+                  <Link href={`/pipeline/${e.id}/editar`} className="text-xs text-brand-500 hover:underline">Editar</Link>
+                </td>
               </tr>
             ))}
             {eventosFiltrados.length === 0 && (
               <tr>
-                <td colSpan={11} className="px-4 py-8 text-center text-[#6B6B76]">
+                <td colSpan={12} className="px-4 py-8 text-center text-[#6B6B76]">
                   Sem eventos para os filtros escolhidos.
                 </td>
               </tr>
@@ -286,4 +290,3 @@ export default function PipelinePage() {
     </main>
   );
 }
-
