@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import type { Status } from "@/lib/mockData";
+import TarefasEvento from "@/components/TarefasEvento";
 
 const TODOS_STATUS: Status[] = ["Ganho", "Boa possibilidade", "Em análise", "Perdido"];
 
@@ -84,6 +85,7 @@ export default function PipelineForm({ eventoId }: { eventoId?: number }) {
   const [sourcesSugestoes, setSourcesSugestoes] = useState<string[]>([]);
   const [tiposServicoSugestoes, setTiposServicoSugestoes] = useState<string[]>([]);
   const [operacaoSugestoes, setOperacaoSugestoes] = useState<string[]>([]);
+  const [meuUtilizadorId, setMeuUtilizadorId] = useState<number | null>(null);
 
   useEffect(() => {
     async function carregar() {
@@ -98,6 +100,13 @@ export default function PipelineForm({ eventoId }: { eventoId?: number }) {
         router.push("/login");
         return;
       }
+
+      const { data: euUtilizador } = await supabase
+        .from("utilizadores")
+        .select("id")
+        .eq("auth_user_id", sessionData.session.user.id)
+        .maybeSingle();
+      if (euUtilizador) setMeuUtilizadorId((euUtilizador as any).id);
 
       const [
         { data: segs }, { data: cats }, { data: utils },
@@ -202,6 +211,67 @@ export default function PipelineForm({ eventoId }: { eventoId?: number }) {
     return Number.isFinite(n) ? n : 0;
   }
 
+  // Replica as fórmulas de cálculo do Excel (colunas P, Q, T, V, AC, AE, AO-AU),
+  // confirmadas por inspeção direta às folhas mensais. Corre no momento de guardar,
+  // para que os eventos criados/editados na app fiquem com os mesmos totais que o Excel.
+  function calcularCamposDerivados(f: FormState) {
+    const fb = num(f.fb);
+    const comissaoPaga = num(f.comissao_paga);
+    const sup = num(f.sup);
+    const sup2 = 0; // coluna Z ("SUP") ainda não está no formulário — fica reservada para depois
+    const comissaoRecebida = num(f.comissao_recebida);
+    const fatura = f.fatura ? num(f.fatura) : 0;
+    const nPax = f.n_pax ? num(f.n_pax) : 0;
+
+    const custoStaff = num(f.custo_staff);
+    // AC — "Produção" (bloco de custos por categoria, sem o staff que já entra à parte)
+    const producaoCalc =
+      num(f.custo_decoracao) + num(f.custo_seguranca) + num(f.custo_animacao) +
+      num(f.custo_aluguer_espacos) + num(f.custo_taxa_logistica) + num(f.custo_limpeza) + num(f.custo_outros);
+
+    // AM — soma do bloco de produção detalhado (BF:BK)
+    const producaoTotalBF_BK =
+      num(f.producao_decoracao) + num(f.producao_seguranca) + num(f.producao_animacao) +
+      num(f.producao_aluguer_espacos) + num(f.producao_limpeza) + num(f.producao_outros);
+
+    // AF:AL — custos de produção/pessoal detalhados
+    const custosProducaoPessoal =
+      num(f.custo_producao_fb) + num(f.custo_producao_pes_sala) + num(f.custo_producao_pes_logistica) +
+      num(f.custo_producao_pes_cozinha) + num(f.custo_producao_pes_copa) + num(f.custo_producao_t_logistica) +
+      num(f.custo_producao_t_cozinha);
+
+    // V — Total = SUM(W:AC)
+    const totalReceita = fb + comissaoPaga + sup + sup2 + comissaoRecebida + custoStaff + producaoCalc;
+    // P — Proveito = V
+    const proveito = totalReceita;
+    // Q — V Pax = V / N Pax
+    const vPax = nPax ? totalReceita / nPax : null;
+    // T — DIF = P - R - X - Z - AA
+    const dif = proveito - fatura - comissaoPaga - sup2 - comissaoRecebida;
+    // AE — Total custo = SUM(AF:AM)
+    const totalCusto = custosProducaoPessoal + producaoTotalBF_BK;
+    // AO / AP — Margem
+    const margemEur = totalReceita - totalCusto;
+    const margemPct = totalReceita !== 0 ? margemEur / totalReceita : null;
+    // AQ / AR — Margem F&B
+    const baseFb = fb + comissaoPaga;
+    const margemFbEur = baseFb - custosProducaoPessoal;
+    const margemFbPct = baseFb !== 0 ? margemFbEur / baseFb : null;
+    // AS / AT — Margem Produção
+    const margemProducaoEur = (sup + sup2 + comissaoRecebida + custoStaff + producaoCalc) - producaoTotalBF_BK;
+    const baseProducao = sup + producaoCalc;
+    const margemProducaoPct = baseProducao !== 0 ? margemProducaoEur / baseProducao : null;
+    // AU — Sala %
+    const salaPct = fb !== 0 && num(f.custo_producao_pes_sala) > 0 ? num(f.custo_producao_pes_sala) / fb : null;
+
+    return {
+      proveito, v_pax: vPax, dif, total_receita: totalReceita, staff: custoStaff, producao: producaoCalc,
+      total_custo: totalCusto, margem_eur: margemEur, margem_pct: margemPct,
+      margem_fb_eur: margemFbEur, margem_fb_pct: margemFbPct,
+      margem_producao_eur: margemProducaoEur, margem_producao_pct: margemProducaoPct, sala_pct: salaPct,
+    };
+  }
+
   async function handleSubmit(ev: React.FormEvent) {
     ev.preventDefault();
     setErro("");
@@ -260,6 +330,7 @@ export default function PipelineForm({ eventoId }: { eventoId?: number }) {
         producao_aluguer_espacos: num(form.producao_aluguer_espacos),
         producao_limpeza: num(form.producao_limpeza),
         producao_outros: num(form.producao_outros),
+        ...calcularCamposDerivados(form),
       };
 
       let pipelineId = eventoId;
@@ -476,6 +547,12 @@ export default function PipelineForm({ eventoId }: { eventoId?: number }) {
           </a>
         </div>
       </form>
+
+      {modoEdicao && eventoId && (
+        <div className="mt-6">
+          <TarefasEvento pipelineId={eventoId} utilizadores={utilizadores} meuUtilizadorId={meuUtilizadorId} />
+        </div>
+      )}
     </main>
   );
 }
