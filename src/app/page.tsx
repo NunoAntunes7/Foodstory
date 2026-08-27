@@ -1,14 +1,77 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { menuItems, tarefasMock } from "@/lib/mockData";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabaseClient";
+import { menuItems } from "@/lib/mockData";
 
 export default function HomePage() {
-  const pendentes = tarefasMock.filter((t) => t.estado === "Pendente");
+  const router = useRouter();
+  const [carregado, setCarregado] = useState(false);
+  const [nome, setNome] = useState("");
+  const [tarefasPendentes, setTarefasPendentes] = useState(0);
+
+  useEffect(() => {
+    async function load() {
+      if (!supabase) {
+        setCarregado(true);
+        return;
+      }
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData.session) {
+        router.push("/login");
+        return;
+      }
+
+      const authUserId = sessionData.session.user.id;
+
+      const { data: utilizador } = await supabase
+        .from("utilizadores")
+        .select("id, nome")
+        .eq("auth_user_id", authUserId)
+        .maybeSingle();
+
+      if (utilizador) {
+        setNome(utilizador.nome);
+        const { count } = await supabase
+          .from("tarefas")
+          .select("id", { count: "exact", head: true })
+          .eq("responsavel_id", utilizador.id)
+          .eq("estado", "Pendente");
+        setTarefasPendentes(count ?? 0);
+      }
+
+      setCarregado(true);
+    }
+    load();
+  }, [router]);
+
+  async function handleLogout() {
+    if (!supabase) return;
+    await supabase.auth.signOut();
+    router.push("/login");
+  }
+
+  if (!carregado) {
+    return (
+      <main className="max-w-3xl mx-auto px-4 py-8">
+        <p className="text-sm text-[#6B6B76]">A carregar…</p>
+      </main>
+    );
+  }
 
   return (
     <main className="max-w-3xl mx-auto px-4 py-8">
-      <div className="mb-8">
-        <p className="text-sm text-[#6B6B76]">Boa tarde,</p>
-        <h1 className="text-2xl font-medium">Nuno</h1>
+      <div className="mb-8 flex items-center justify-between">
+        <div>
+          <p className="text-sm text-[#6B6B76]">Olá,</p>
+          <h1 className="text-2xl font-medium">{nome || "utilizador"}</h1>
+        </div>
+        <button onClick={handleLogout} className="text-xs text-[#6B6B76] hover:underline">
+          Sair
+        </button>
       </div>
 
       <Link
@@ -18,7 +81,7 @@ export default function HomePage() {
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm text-brand-50">As minhas tarefas</p>
-            <p className="text-3xl font-medium mt-1">{pendentes.length} pendentes</p>
+            <p className="text-3xl font-medium mt-1">{tarefasPendentes} pendentes</p>
           </div>
           <span className="text-2xl">→</span>
         </div>
