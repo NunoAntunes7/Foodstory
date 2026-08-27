@@ -38,7 +38,14 @@ export default function PipelinePage() {
   const [erro, setErro] = useState("");
   const [eventos, setEventos] = useState<PipelineEvento[]>([]);
 
-  const [mes, setMes] = useState("");
+  const anoAtual = new Date().getFullYear();
+  const mesesDisponiveis = useMemo(
+    () => Array.from({ length: 12 }, (_, i) => `${anoAtual}-${String(i + 1).padStart(2, "0")}`).reverse(),
+    [anoAtual]
+  );
+
+  const mesAtualStr = new Date().toISOString().slice(0, 7);
+  const [mes, setMes] = useState(mesesDisponiveis.includes(mesAtualStr) ? mesAtualStr : mesesDisponiveis[0]);
   const [statusAtivos, setStatusAtivos] = useState<Status[]>(["Ganho", "Boa possibilidade", "Em análise"]);
   const [comercial, setComercial] = useState("Todos");
   const [colunasExtra, setColunasExtra] = useState<string[]>([]);
@@ -57,6 +64,19 @@ export default function PipelinePage() {
         return;
       }
 
+      if (!mes) {
+        setCarregado(true);
+        return;
+      }
+
+      // Filtro por mês feito no servidor (não trazemos o ano todo de cada vez —
+      // evita o limite por defeito de linhas por pedido da API do Supabase).
+      const inicio = `${mes}-01`;
+      const [anoStr, mesStr] = mes.split("-");
+      const anoNum = Number(anoStr);
+      const mesNum = Number(mesStr);
+      const proximoMes = mesNum === 12 ? `${anoNum + 1}-01-01` : `${anoNum}-${String(mesNum + 1).padStart(2, "0")}-01`;
+
       const { data, error } = await supabase
         .from("pipeline")
         .select(
@@ -66,7 +86,10 @@ export default function PipelinePage() {
            segmentos(nome),
            pipeline_comerciais(utilizadores(nome))`
         )
-        .order("data", { ascending: false });
+        .gte("data", inicio)
+        .lt("data", proximoMes)
+        .order("data", { ascending: false })
+        .limit(5000);
 
       if (error) {
         setErro(error.message);
@@ -94,20 +117,10 @@ export default function PipelinePage() {
       setEventos(mapeados);
       setCarregado(true);
     }
+    setCarregado(false);
+    setComercial("Todos"); // o filtro de comercial é por mês; ao mudar de mês, repõe para não esconder dados sem se perceber porquê
     load();
-  }, [router]);
-
-  const mesesDisponiveis = useMemo(() => {
-    const set = new Set(eventos.map((e) => e.data.slice(0, 7)));
-    return Array.from(set).sort().reverse();
-  }, [eventos]);
-
-  useEffect(() => {
-    if (!mes && mesesDisponiveis.length > 0) {
-      const hoje = new Date().toISOString().slice(0, 7);
-      setMes(mesesDisponiveis.includes(hoje) ? hoje : mesesDisponiveis[0]);
-    }
-  }, [mesesDisponiveis, mes]);
+  }, [router, mes]);
 
   const comerciais = useMemo(
     () => ["Todos", ...Array.from(new Set(eventos.flatMap((e) => e.comercial.split(" / ")))).filter((c) => c && c !== "—")],
@@ -115,13 +128,13 @@ export default function PipelinePage() {
   );
 
   const eventosFiltrados = useMemo(() => {
+    // O mês já foi filtrado no servidor (ver query acima); aqui só falta status e comercial.
     return eventos.filter((e) => {
-      if (mes && !e.data.startsWith(mes)) return false;
       if (!statusAtivos.includes(e.status)) return false;
       if (comercial !== "Todos" && !e.comercial.split(" / ").includes(comercial)) return false;
       return true;
     });
-  }, [eventos, mes, statusAtivos, comercial]);
+  }, [eventos, statusAtivos, comercial]);
 
   const kpis = useMemo(() => {
     const totais = { total: 0, ponderado: 0, ganho: 0, boa: 0, analise: 0 };
@@ -273,3 +286,4 @@ export default function PipelinePage() {
     </main>
   );
 }
+
