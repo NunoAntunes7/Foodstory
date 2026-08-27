@@ -1,41 +1,127 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import StatusBadge from "@/components/StatusBadge";
 import KpiCard from "@/components/KpiCard";
-import { pipelineMock, statusProbabilidade, type Status } from "@/lib/mockData";
+import { supabase } from "@/lib/supabaseClient";
+import { statusProbabilidade, type Status } from "@/lib/mockData";
 
 const TODOS_STATUS: Status[] = ["Ganho", "Boa possibilidade", "Em análise", "Perdido"];
-
 const COLUNAS_OPCIONAIS = ["N Evento", "F&B"] as const;
+
+type PipelineEvento = {
+  id: number;
+  n_evento: number | null;
+  status: Status;
+  data: string;
+  cliente_direto: string;
+  cliente_final: string;
+  segmento: string;
+  espaco: string;
+  tipo_servico: string;
+  comercial: string;
+  operacao: string;
+  n_pax: number;
+  proveito: number;
+  fatura: number;
+};
 
 function formatEUR(v: number) {
   return v.toLocaleString("pt-PT", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
 }
 
 export default function PipelinePage() {
-  const mesesDisponiveis = useMemo(() => {
-    const set = new Set(pipelineMock.map((e) => e.data.slice(0, 7)));
-    return Array.from(set).sort();
-  }, []);
+  const router = useRouter();
+  const [carregado, setCarregado] = useState(false);
+  const [erro, setErro] = useState("");
+  const [eventos, setEventos] = useState<PipelineEvento[]>([]);
 
-  const [mes, setMes] = useState(mesesDisponiveis[0] ?? "");
-  // Perdidos deselecionados por defeito
+  const [mes, setMes] = useState("");
   const [statusAtivos, setStatusAtivos] = useState<Status[]>(["Ganho", "Boa possibilidade", "Em análise"]);
   const [comercial, setComercial] = useState("Todos");
   const [colunasExtra, setColunasExtra] = useState<string[]>([]);
 
-  const comerciais = useMemo(() => ["Todos", ...Array.from(new Set(pipelineMock.map((e) => e.comercial)))], []);
+  useEffect(() => {
+    async function load() {
+      if (!supabase) {
+        setErro("Supabase não está configurado (falta NEXT_PUBLIC_SUPABASE_URL / ANON_KEY).");
+        setCarregado(true);
+        return;
+      }
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData.session) {
+        router.push("/login");
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("pipeline")
+        .select(
+          `id, n_evento, n_evento_legado, status, data, n_pax, proveito, fatura, tipo_servico, espaco, operacao,
+           cliente_direto:clientes!pipeline_cliente_direto_id_fkey(nome),
+           cliente_final:clientes!pipeline_cliente_final_id_fkey(nome),
+           segmentos(nome),
+           pipeline_comerciais(utilizadores(nome))`
+        )
+        .order("data", { ascending: false });
+
+      if (error) {
+        setErro(error.message);
+        setCarregado(true);
+        return;
+      }
+
+      const mapeados: PipelineEvento[] = (data ?? []).map((r: any) => ({
+        id: r.id,
+        n_evento: r.n_evento_legado ?? r.n_evento,
+        status: r.status,
+        data: r.data,
+        cliente_direto: r.cliente_direto?.nome ?? "—",
+        cliente_final: r.cliente_final?.nome ?? "—",
+        segmento: r.segmentos?.nome ?? "—",
+        espaco: r.espaco ?? "—",
+        tipo_servico: r.tipo_servico ?? "—",
+        comercial: (r.pipeline_comerciais ?? []).map((pc: any) => pc.utilizadores?.nome).filter(Boolean).join(" / ") || "—",
+        operacao: r.operacao ?? "—",
+        n_pax: r.n_pax ?? 0,
+        proveito: Number(r.proveito ?? 0),
+        fatura: Number(r.fatura ?? 0),
+      }));
+
+      setEventos(mapeados);
+      setCarregado(true);
+    }
+    load();
+  }, [router]);
+
+  const mesesDisponiveis = useMemo(() => {
+    const set = new Set(eventos.map((e) => e.data.slice(0, 7)));
+    return Array.from(set).sort().reverse();
+  }, [eventos]);
+
+  useEffect(() => {
+    if (!mes && mesesDisponiveis.length > 0) {
+      const hoje = new Date().toISOString().slice(0, 7);
+      setMes(mesesDisponiveis.includes(hoje) ? hoje : mesesDisponiveis[0]);
+    }
+  }, [mesesDisponiveis, mes]);
+
+  const comerciais = useMemo(
+    () => ["Todos", ...Array.from(new Set(eventos.flatMap((e) => e.comercial.split(" / ")))).filter((c) => c && c !== "—")],
+    [eventos]
+  );
 
   const eventosFiltrados = useMemo(() => {
-    return pipelineMock.filter((e) => {
+    return eventos.filter((e) => {
       if (mes && !e.data.startsWith(mes)) return false;
       if (!statusAtivos.includes(e.status)) return false;
-      if (comercial !== "Todos" && e.comercial !== comercial) return false;
+      if (comercial !== "Todos" && !e.comercial.split(" / ").includes(comercial)) return false;
       return true;
     });
-  }, [mes, statusAtivos, comercial]);
+  }, [eventos, mes, statusAtivos, comercial]);
 
   const kpis = useMemo(() => {
     const totais = { total: 0, ponderado: 0, ganho: 0, boa: 0, analise: 0 };
@@ -55,6 +141,22 @@ export default function PipelinePage() {
 
   function toggleColuna(c: string) {
     setColunasExtra((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
+  }
+
+  if (!carregado) {
+    return (
+      <main className="max-w-6xl mx-auto px-4 py-8">
+        <p className="text-sm text-[#6B6B76]">A carregar…</p>
+      </main>
+    );
+  }
+
+  if (erro) {
+    return (
+      <main className="max-w-6xl mx-auto px-4 py-8">
+        <p className="text-sm text-status-perdido">Erro a carregar o Pipeline: {erro}</p>
+      </main>
+    );
   }
 
   return (
@@ -78,21 +180,14 @@ export default function PipelinePage() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
-        <select
-          value={mes}
-          onChange={(e) => setMes(e.target.value)}
-          className="h-9 rounded-lg border border-[#E7E6F0] bg-white px-3 text-sm"
-        >
+        <select value={mes} onChange={(e) => setMes(e.target.value)} className="h-9 rounded-lg border border-[#E7E6F0] bg-white px-3 text-sm">
+          {mesesDisponiveis.length === 0 && <option value="">Sem eventos</option>}
           {mesesDisponiveis.map((m) => (
             <option key={m} value={m}>{m}</option>
           ))}
         </select>
 
-        <select
-          value={comercial}
-          onChange={(e) => setComercial(e.target.value)}
-          className="h-9 rounded-lg border border-[#E7E6F0] bg-white px-3 text-sm"
-        >
+        <select value={comercial} onChange={(e) => setComercial(e.target.value)} className="h-9 rounded-lg border border-[#E7E6F0] bg-white px-3 text-sm">
           {comerciais.map((c) => (
             <option key={c} value={c}>{c === "Todos" ? "Comercial: Todos" : c}</option>
           ))}
@@ -104,9 +199,7 @@ export default function PipelinePage() {
               key={s}
               onClick={() => toggleStatus(s)}
               className={`h-9 rounded-lg border px-3 text-xs font-medium transition-colors ${
-                statusAtivos.includes(s)
-                  ? "border-brand-400 bg-brand-50 text-brand-600"
-                  : "border-[#E7E6F0] bg-white text-[#6B6B76]"
+                statusAtivos.includes(s) ? "border-brand-400 bg-brand-50 text-brand-600" : "border-[#E7E6F0] bg-white text-[#6B6B76]"
               }`}
             >
               {s}
@@ -121,9 +214,7 @@ export default function PipelinePage() {
               key={c}
               onClick={() => toggleColuna(c)}
               className={`h-8 rounded-lg border px-2 text-xs transition-colors ${
-                colunasExtra.includes(c)
-                  ? "border-brand-400 bg-brand-50 text-brand-600"
-                  : "border-[#E7E6F0] bg-white text-[#6B6B76]"
+                colunasExtra.includes(c) ? "border-brand-400 bg-brand-50 text-brand-600" : "border-[#E7E6F0] bg-white text-[#6B6B76]"
               }`}
             >
               {c}
