@@ -62,7 +62,12 @@ export default function TarefasPage() {
       }
       setMeuId(utilizador.id);
 
-      const { data: utils } = await supabase.from("utilizadores").select("id, nome").order("nome");
+      // Só utilizadores reais da app (com conta ativa) podem receber tarefas.
+      const { data: utils } = await supabase
+        .from("utilizadores")
+        .select("id, nome")
+        .eq("estado_conta", "Ativo")
+        .order("nome");
       setUtilizadores(utils ?? []);
 
       const { data, error } = await supabase
