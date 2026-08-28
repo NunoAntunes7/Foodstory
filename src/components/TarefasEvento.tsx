@@ -15,14 +15,13 @@ type Tarefa = {
 
 export default function TarefasEvento({
   pipelineId,
-  utilizadores,
   meuUtilizadorId,
 }: {
   pipelineId: number;
-  utilizadores: { id: number; nome: string }[];
   meuUtilizadorId: number | null;
 }) {
   const [tarefas, setTarefas] = useState<Tarefa[]>([]);
+  const [utilizadores, setUtilizadores] = useState<{ id: number; nome: string }[]>([]);
   const [carregado, setCarregado] = useState(false);
   const [aCriar, setACriar] = useState(false);
   const [titulo, setTitulo] = useState("");
@@ -32,6 +31,16 @@ export default function TarefasEvento({
 
   async function carregar() {
     if (!supabase) return;
+
+    // Só utilizadores reais da app (com conta ativa) podem receber tarefas —
+    // não os comerciais-placeholder criados no import histórico do Excel.
+    const { data: utilsAtivos } = await supabase
+      .from("utilizadores")
+      .select("id, nome")
+      .eq("estado_conta", "Ativo")
+      .order("nome");
+    setUtilizadores(utilsAtivos ?? []);
+
     const { data } = await supabase
       .from("tarefas")
       .select(
@@ -195,3 +204,4 @@ export default function TarefasEvento({
     </section>
   );
 }
+
