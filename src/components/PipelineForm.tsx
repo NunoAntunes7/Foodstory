@@ -550,9 +550,10 @@ export default function PipelineForm({ eventoId }: { eventoId?: number }) {
 
       {modoEdicao && eventoId && (
         <div className="mt-6">
-          <TarefasEvento pipelineId={eventoId} utilizadores={utilizadores} meuUtilizadorId={meuUtilizadorId} />
+          <TarefasEvento pipelineId={eventoId} meuUtilizadorId={meuUtilizadorId} />
         </div>
       )}
     </main>
   );
 }
+
