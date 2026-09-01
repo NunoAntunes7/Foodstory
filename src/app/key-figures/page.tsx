@@ -15,6 +15,24 @@ const REF_2025 = {
   adjudicados: [112880, 200886, 172173, 261428, 583960, 519462, 835105, 392533, 475755, 221259, 91028, 96087],
   faturado: [119327, 221819, 187592, 275187, 627045, 546725, 893106, 362810, 332527, 167722, 35500, 4328],
 };
+// Orçamento mensal 2026 por espaço, tal como estava fixado na folha "Key Figures" do Excel
+// (linhas 69-72) — são metas definidas manualmente no início do ano, não vêm do Pipeline.
+const BUDGET_2026 = {
+  outsideCatering: [80000, 80000, 80000, 100000, 225000, 325000, 450000, 25000, 300000, 200000, 550000, 325000],
+  ccb: [50000, 50000, 70000, 150000, 165000, 120000, 120000, 10000, 80000, 200000, 200000, 100000],
+  regium: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  vandelli: [80000, 80000, 80000, 105000, 320000, 340000, 325000, 370000, 400000, 270000, 140000, 150000],
+};
+
+// "Outside Catering" = todos os espaços que não são CCB / Regium / Vandelli, tal como no Excel
+// (Monsanto, Rive Rouge, Parceiros, Esp. Externos, ou qualquer outro espaço agrupados).
+function baldeEspaco(catEspaco: string | null): "ccb" | "regium" | "vandelli" | "outsideCatering" {
+  if (catEspaco === "CCB") return "ccb";
+  if (catEspaco === "Regium") return "regium";
+  if (catEspaco === "Vandelli") return "vandelli";
+  return "outsideCatering";
+}
+
 const soma = (arr: number[]) => arr.reduce((a, b) => a + b, 0);
 
 function formatEUR(v: number) {
@@ -29,6 +47,7 @@ function mesDe(dataStr: string) {
 }
 
 type LinhaKF = { label: string; valores: number[]; total: number; ref2025Total: number };
+type LinhaEspacoKF = { label: string; valores: number[]; total: number; budgetTotal: number };
 
 export default function KeyFiguresPage() {
   const router = useRouter();
@@ -37,6 +56,8 @@ export default function KeyFiguresPage() {
   const [linhas, setLinhas] = useState<LinhaKF[]>([]);
   const [propostasPorMes, setPropostasPorMes] = useState<number[]>(Array(12).fill(0));
   const [adjudicadosPorMes, setAdjudicadosPorMes] = useState<number[]>(Array(12).fill(0));
+  const [linhasEspaco, setLinhasEspaco] = useState<LinhaEspacoKF[]>([]);
+  const [balancoEspaco, setBalancoEspaco] = useState<{ total: number; budget: number }>({ total: 0, budget: 0 });
 
   useEffect(() => {
     async function carregar() {
@@ -110,6 +131,50 @@ export default function KeyFiguresPage() {
       ]);
       setPropostasPorMes(propostas);
       setAdjudicadosPorMes(adjudicados);
+
+      // Faturação (Adjudicados) por espaço — só precisamos dos eventos Ganho.
+      const dadosEspaco: { data: string; proveito: number | null; categorias_espaco: { nome: string } | null }[] = [];
+      for (let pagina = 0; ; pagina++) {
+        const inicio = pagina * TAMANHO_PAGINA;
+        const { data: lote, error } = await supabase
+          .from("pipeline")
+          .select("data, proveito, categorias_espaco(nome)")
+          .eq("status", "Ganho")
+          .gte("data", "2026-01-01")
+          .lt("data", "2027-01-01")
+          .order("data", { ascending: true })
+          .range(inicio, inicio + TAMANHO_PAGINA - 1);
+
+        if (error) break;
+        dadosEspaco.push(...(((lote as any[]) ?? []) as any));
+        if (!lote || lote.length < TAMANHO_PAGINA) break;
+      }
+
+      const ccb = Array(12).fill(0);
+      const regium = Array(12).fill(0);
+      const vandelli = Array(12).fill(0);
+      const outsideCatering = Array(12).fill(0);
+      const baldes = { ccb, regium, vandelli, outsideCatering };
+
+      for (const r of dadosEspaco) {
+        const m = mesDe(r.data) - 1;
+        if (m < 0 || m > 11) continue;
+        const nome = (r as any).categorias_espaco?.nome ?? null;
+        baldes[baldeEspaco(nome)][m] += Number(r.proveito ?? 0);
+      }
+
+      const totalVN = ccb.map((v, i) => v + regium[i] + vandelli[i] + outsideCatering[i]);
+      const totalBudget = BUDGET_2026.ccb.map((v, i) => v + BUDGET_2026.regium[i] + BUDGET_2026.vandelli[i] + BUDGET_2026.outsideCatering[i]);
+
+      setLinhasEspaco([
+        { label: "Vandelli BG", valores: vandelli, total: soma(vandelli), budgetTotal: soma(BUDGET_2026.vandelli) },
+        { label: "CCB", valores: ccb, total: soma(ccb), budgetTotal: soma(BUDGET_2026.ccb) },
+        { label: "Regium", valores: regium, total: soma(regium), budgetTotal: soma(BUDGET_2026.regium) },
+        { label: "Outside Catering", valores: outsideCatering, total: soma(outsideCatering), budgetTotal: soma(BUDGET_2026.outsideCatering) },
+        { label: "Total VN", valores: totalVN, total: soma(totalVN), budgetTotal: soma(totalBudget) },
+      ]);
+      setBalancoEspaco({ total: soma(totalVN), budget: soma(totalBudget) });
+
       setCarregado(true);
     }
     carregar();
@@ -197,6 +262,48 @@ export default function KeyFiguresPage() {
         filtradas por estado. Em proposta = ainda por decidir (Boa possibilidade + Em análise). Faturado = soma do campo
         Fatura. Por faturar / comissões = Adjudicados − Faturado. Os valores de 2025 são os totais fechados do ano anterior,
         para comparação.
+      </p>
+
+      <div className="mt-8 mb-2">
+        <h2 className="text-lg font-medium">Faturação por espaço (Adjudicados) vs. Orçamento 2026</h2>
+      </div>
+
+      <div className="rounded-xl border border-[#E7E6F0] bg-white overflow-x-auto mb-3">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-[#6B6B76] border-b border-[#E7E6F0]">
+              <th className="px-3 py-3 font-medium sticky left-0 bg-white">Espaço</th>
+              {MESES.map((m) => <th key={m} className="px-2 py-3 font-medium text-right">{m}</th>)}
+              <th className="px-3 py-3 font-medium text-right">Total 2026</th>
+              <th className="px-3 py-3 font-medium text-right">Orçamento</th>
+              <th className="px-3 py-3 font-medium text-right">Balanço</th>
+            </tr>
+          </thead>
+          <tbody>
+            {linhasEspaco.map((linha) => {
+              const balanco = linha.total - linha.budgetTotal;
+              const destaque = linha.label === "Total VN";
+              return (
+                <tr key={linha.label} className={`border-b border-[#F1F0F7] last:border-0 ${destaque ? "bg-[#FAFAFC]" : ""}`}>
+                  <td className={`px-3 py-2.5 sticky left-0 whitespace-nowrap ${destaque ? "font-semibold bg-[#FAFAFC]" : "font-medium bg-white"}`}>{linha.label}</td>
+                  {linha.valores.map((v, i) => (
+                    <td key={i} className="px-2 py-2.5 text-right text-[#6B6B76] whitespace-nowrap">{formatEUR(v)}</td>
+                  ))}
+                  <td className="px-3 py-2.5 text-right font-medium whitespace-nowrap">{formatEUR(linha.total)}</td>
+                  <td className="px-3 py-2.5 text-right text-[#6B6B76] whitespace-nowrap">{formatEUR(linha.budgetTotal)}</td>
+                  <td className={`px-3 py-2.5 text-right whitespace-nowrap ${balanco >= 0 ? "text-status-ganho" : "text-status-perdido"}`}>
+                    {balanco >= 0 ? "+" : ""}{formatEUR(balanco)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="text-xs text-[#6B6B76] mb-8">
+        Outside Catering = tudo o que não é CCB, Regium ou Vandelli (Monsanto, Rive Rouge, Parceiros, Esp. Externos e
+        outros). Orçamento = metas fixadas no início do ano (não vem do Pipeline). Balanço = Total 2026 − Orçamento.
       </p>
     </main>
   );
