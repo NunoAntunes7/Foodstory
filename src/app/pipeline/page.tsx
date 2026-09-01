@@ -263,12 +263,15 @@ export default function PipelinePage() {
               <th className="px-4 py-3 font-medium">Proveito</th>
               {colunasExtra.includes("N Evento") && <th className="px-4 py-3 font-medium">N Evento</th>}
               {colunasExtra.includes("F&B") && <th className="px-4 py-3 font-medium">F&amp;B</th>}
-              <th className="px-4 py-3 font-medium"></th>
             </tr>
           </thead>
           <tbody>
             {eventosFiltrados.map((e) => (
-              <tr key={e.id} className="border-b border-[#F1F0F7] last:border-0">
+              <tr
+                key={e.id}
+                onClick={() => router.push(`/pipeline/${e.id}/editar`)}
+                className="border-b border-[#F1F0F7] last:border-0 cursor-pointer hover:bg-[#FAFAFC] transition-colors"
+              >
                 <td className="px-4 py-3"><StatusBadge status={e.status} /></td>
                 <td className="px-4 py-3 text-[#6B6B76]">{new Date(e.data).toLocaleDateString("pt-PT")}</td>
                 <td className="px-4 py-3">{e.cliente_direto}</td>
@@ -282,14 +285,11 @@ export default function PipelinePage() {
                 <td className="px-4 py-3 font-medium">{formatEUR(e.proveito)}</td>
                 {colunasExtra.includes("N Evento") && <td className="px-4 py-3 text-[#6B6B76]">{e.n_evento}</td>}
                 {colunasExtra.includes("F&B") && <td className="px-4 py-3 text-[#6B6B76]">{formatEUR(e.proveito)}</td>}
-                <td className="px-4 py-3 text-right">
-                  <Link href={`/pipeline/${e.id}/editar`} className="text-xs text-brand-500 hover:underline">Editar</Link>
-                </td>
               </tr>
             ))}
             {eventosFiltrados.length === 0 && (
               <tr>
-                <td colSpan={12} className="px-4 py-8 text-center text-[#6B6B76]">
+                <td colSpan={11} className="px-4 py-8 text-center text-[#6B6B76]">
                   Sem eventos para os filtros escolhidos.
                 </td>
               </tr>
