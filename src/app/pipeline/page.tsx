@@ -77,24 +77,34 @@ export default function PipelinePage() {
       const mesNum = Number(mesStr);
       const proximoMes = mesNum === 12 ? `${anoNum + 1}-01-01` : `${anoNum}-${String(mesNum + 1).padStart(2, "0")}-01`;
 
-      const { data, error } = await supabase
-        .from("pipeline")
-        .select(
-          `id, n_evento, n_evento_legado, status, data, n_pax, proveito, fatura, tipo_servico, espaco, operacao,
-           cliente_direto:clientes!pipeline_cliente_direto_id_fkey(nome),
-           cliente_final:clientes!pipeline_cliente_final_id_fkey(nome),
-           segmentos(nome),
-           pipeline_comerciais(utilizadores(nome))`
-        )
-        .gte("data", inicio)
-        .lt("data", proximoMes)
-        .order("data", { ascending: false })
-        .limit(5000);
+      // O Supabase limita cada pedido a um máximo de linhas (normalmente 1000),
+      // independentemente do .limit() pedido — paginamos com .range() para nunca
+      // perder eventos em silêncio, mesmo em meses muito cheios.
+      const data: any[] = [];
+      const TAMANHO_PAGINA = 1000;
+      for (let pagina = 0; ; pagina++) {
+        const desde = pagina * TAMANHO_PAGINA;
+        const { data: lote, error } = await supabase
+          .from("pipeline")
+          .select(
+            `id, n_evento, n_evento_legado, status, data, n_pax, proveito, fatura, tipo_servico, espaco, operacao,
+             cliente_direto:clientes!pipeline_cliente_direto_id_fkey(nome),
+             cliente_final:clientes!pipeline_cliente_final_id_fkey(nome),
+             segmentos(nome),
+             pipeline_comerciais(utilizadores(nome))`
+          )
+          .gte("data", inicio)
+          .lt("data", proximoMes)
+          .order("data", { ascending: false })
+          .range(desde, desde + TAMANHO_PAGINA - 1);
 
-      if (error) {
-        setErro(error.message);
-        setCarregado(true);
-        return;
+        if (error) {
+          setErro(error.message);
+          setCarregado(true);
+          return;
+        }
+        data.push(...(lote ?? []));
+        if (!lote || lote.length < TAMANHO_PAGINA) break;
       }
 
       const mapeados: PipelineEvento[] = (data ?? []).map((r: any) => ({
