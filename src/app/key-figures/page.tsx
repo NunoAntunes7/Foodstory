@@ -51,17 +51,28 @@ export default function KeyFiguresPage() {
         return;
       }
 
-      const { data, error } = await supabase
-        .from("pipeline")
-        .select("data, status, proveito, fatura")
-        .gte("data", "2026-01-01")
-        .lt("data", "2027-01-01")
-        .limit(5000);
+      // O Supabase limita cada pedido a um máximo de linhas (normalmente 1000),
+      // independentemente do .limit() pedido — por isso paginamos com .range()
+      // até trazer o ano inteiro (aqui já vão mais de 2500 eventos em 2026).
+      const data: { data: string; status: string; proveito: number | null; fatura: number | null }[] = [];
+      const TAMANHO_PAGINA = 1000;
+      for (let pagina = 0; ; pagina++) {
+        const inicio = pagina * TAMANHO_PAGINA;
+        const { data: lote, error } = await supabase
+          .from("pipeline")
+          .select("data, status, proveito, fatura")
+          .gte("data", "2026-01-01")
+          .lt("data", "2027-01-01")
+          .order("data", { ascending: true })
+          .range(inicio, inicio + TAMANHO_PAGINA - 1);
 
-      if (error) {
-        setErro(error.message);
-        setCarregado(true);
-        return;
+        if (error) {
+          setErro(error.message);
+          setCarregado(true);
+          return;
+        }
+        data.push(...((lote as any[]) ?? []));
+        if (!lote || lote.length < TAMANHO_PAGINA) break;
       }
 
       const propostas = Array(12).fill(0);
