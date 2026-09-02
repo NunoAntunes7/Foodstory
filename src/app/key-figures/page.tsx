@@ -33,14 +33,24 @@ function baldeEspaco(catEspaco: string | null): "ccb" | "regium" | "vandelli" | 
   return "outsideCatering";
 }
 
-const soma = (arr: number[]) => arr.reduce((a, b) => a + b, 0);
+const soma = (arr: (number | null)[]) => arr.reduce((a: number, b) => a + (b ?? 0), 0);
+const somarColunas12 = (linhas: number[][]) => {
+  const out = Array(12).fill(0);
+  for (const l of linhas) for (let i = 0; i < 12; i++) out[i] += l[i] ?? 0;
+  return out;
+};
 
-function formatEUR(v: number) {
+function formatEUR(v: number | null) {
+  if (v === null || !Number.isFinite(v)) return "—";
   return v.toLocaleString("pt-PT", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
 }
 function formatPct(v: number | null) {
   if (v === null || !Number.isFinite(v)) return "—";
   return `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%`;
+}
+function formatInt(v: number | null) {
+  if (v === null || !Number.isFinite(v)) return "—";
+  return v.toLocaleString("pt-PT");
 }
 function mesDe(dataStr: string) {
   return Number(dataStr.slice(5, 7));
@@ -48,34 +58,55 @@ function mesDe(dataStr: string) {
 
 type LinhaKF = { label: string; valores: number[]; total: number; ref2025Total: number };
 type LinhaEspacoKF = { label: string; valores: number[]; total: number; budgetTotal: number };
-type LinhaDim = { label: string; vendas: number; propostas: number; numPropostas: number; volumeNegocios: number };
+type LinhaDimMensal = { label: string; vendas: number[]; propostas: number[]; numPropostas: number[]; volumeNegocios: number[] };
+type LinhaMensal = { label: string; valores: (number | null)[]; total: number | null };
 
-function novaLinhaDim(label: string): LinhaDim {
-  return { label, vendas: 0, propostas: 0, numPropostas: 0, volumeNegocios: 0 };
-}
-function txConversao(vendas: number, propostas: number) {
-  return propostas !== 0 ? vendas / propostas : null;
+function novaLinhaDimMensal(label: string): LinhaDimMensal {
+  return { label, vendas: Array(12).fill(0), propostas: Array(12).fill(0), numPropostas: Array(12).fill(0), volumeNegocios: Array(12).fill(0) };
 }
 
-function TabelaDim({
-  titulo, linhas, mostrarNumPropostas, mostrarVolumeNegocios, nota,
+function paraLinhasMensais(mapa: LinhaDimMensal[], campo: "vendas" | "propostas" | "numPropostas" | "volumeNegocios"): LinhaMensal[] {
+  return mapa
+    .map((l) => ({ label: l.label, valores: l[campo], total: soma(l[campo]) }))
+    .sort((a, b) => (b.total ?? 0) - (a.total ?? 0));
+}
+
+function paraLinhasTxConversao(mapa: LinhaDimMensal[]): LinhaMensal[] {
+  return mapa
+    .map((l) => ({
+      label: l.label,
+      valores: l.vendas.map((v, i) => (l.propostas[i] ? v / l.propostas[i] : null)),
+      total: soma(l.propostas) ? soma(l.vendas) / soma(l.propostas) : null,
+    }))
+    .sort((a, b) => (b.total ?? 0) - (a.total ?? 0));
+}
+
+function linhaTotalSoma(linhas: LinhaMensal[]): LinhaMensal {
+  const valores = somarColunas12(linhas.map((l) => l.valores.map((v) => v ?? 0)));
+  return { label: "TOTAL", valores, total: soma(valores) };
+}
+
+function linhaTotalTxConversao(mapa: LinhaDimMensal[]): LinhaMensal {
+  const vendas = somarColunas12(mapa.map((l) => l.vendas));
+  const propostas = somarColunas12(mapa.map((l) => l.propostas));
+  return {
+    label: "TOTAL",
+    valores: vendas.map((v, i) => (propostas[i] ? v / propostas[i] : null)),
+    total: soma(propostas) ? soma(vendas) / soma(propostas) : null,
+  };
+}
+
+function TabelaMensal({
+  titulo, linhas, linhaTotal, formato = "eur", colunaLabel = "Nome", nota,
 }: {
   titulo: string;
-  linhas: LinhaDim[];
-  mostrarNumPropostas?: boolean;
-  mostrarVolumeNegocios?: boolean;
+  linhas: LinhaMensal[];
+  linhaTotal?: LinhaMensal;
+  formato?: "eur" | "int" | "pct";
+  colunaLabel?: string;
   nota?: string;
 }) {
-  const totais = linhas.reduce(
-    (acc, l) => ({
-      vendas: acc.vendas + l.vendas,
-      propostas: acc.propostas + l.propostas,
-      numPropostas: acc.numPropostas + l.numPropostas,
-      volumeNegocios: acc.volumeNegocios + l.volumeNegocios,
-    }),
-    { vendas: 0, propostas: 0, numPropostas: 0, volumeNegocios: 0 }
-  );
-
+  const formatar = formato === "pct" ? formatPct : formato === "int" ? formatInt : formatEUR;
   return (
     <div className="mb-8">
       <h2 className="text-lg font-medium mb-2">{titulo}</h2>
@@ -83,33 +114,30 @@ function TabelaDim({
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs text-[#6B6B76] border-b border-[#E7E6F0]">
-              <th className="px-3 py-3 font-medium">Nome</th>
-              <th className="px-3 py-3 font-medium text-right">Vendas (Ganho)</th>
-              <th className="px-3 py-3 font-medium text-right">Propostas</th>
-              {mostrarNumPropostas && <th className="px-3 py-3 font-medium text-right">Nº Propostas</th>}
-              {mostrarVolumeNegocios && <th className="px-3 py-3 font-medium text-right">Volume Negócios (Fatura)</th>}
-              <th className="px-3 py-3 font-medium text-right">Tx. Conversão</th>
+              <th className="px-3 py-3 font-medium sticky left-0 bg-white">{colunaLabel}</th>
+              {MESES.map((m) => <th key={m} className="px-2 py-3 font-medium text-right">{m}</th>)}
+              <th className="px-3 py-3 font-medium text-right">Total 2026</th>
             </tr>
           </thead>
           <tbody>
-            {linhas.map((l) => (
-              <tr key={l.label} className="border-b border-[#F1F0F7] last:border-0">
-                <td className="px-3 py-2.5 font-medium whitespace-nowrap">{l.label}</td>
-                <td className="px-3 py-2.5 text-right whitespace-nowrap">{formatEUR(l.vendas)}</td>
-                <td className="px-3 py-2.5 text-right text-[#6B6B76] whitespace-nowrap">{formatEUR(l.propostas)}</td>
-                {mostrarNumPropostas && <td className="px-3 py-2.5 text-right text-[#6B6B76] whitespace-nowrap">{l.numPropostas}</td>}
-                {mostrarVolumeNegocios && <td className="px-3 py-2.5 text-right text-[#6B6B76] whitespace-nowrap">{formatEUR(l.volumeNegocios)}</td>}
-                <td className="px-3 py-2.5 text-right whitespace-nowrap">{formatPct(txConversao(l.vendas, l.propostas))}</td>
+            {linhas.map((linha) => (
+              <tr key={linha.label} className="border-b border-[#F1F0F7] last:border-0">
+                <td className="px-3 py-2.5 font-medium sticky left-0 bg-white whitespace-nowrap">{linha.label}</td>
+                {linha.valores.map((v, i) => (
+                  <td key={i} className="px-2 py-2.5 text-right text-[#6B6B76] whitespace-nowrap">{formatar(v)}</td>
+                ))}
+                <td className="px-3 py-2.5 text-right font-medium whitespace-nowrap">{formatar(linha.total)}</td>
               </tr>
             ))}
-            <tr className="bg-[#FAFAFC] font-semibold">
-              <td className="px-3 py-2.5 whitespace-nowrap">TOTAL</td>
-              <td className="px-3 py-2.5 text-right whitespace-nowrap">{formatEUR(totais.vendas)}</td>
-              <td className="px-3 py-2.5 text-right whitespace-nowrap">{formatEUR(totais.propostas)}</td>
-              {mostrarNumPropostas && <td className="px-3 py-2.5 text-right whitespace-nowrap">{totais.numPropostas}</td>}
-              {mostrarVolumeNegocios && <td className="px-3 py-2.5 text-right whitespace-nowrap">{formatEUR(totais.volumeNegocios)}</td>}
-              <td className="px-3 py-2.5 text-right whitespace-nowrap">{formatPct(txConversao(totais.vendas, totais.propostas))}</td>
-            </tr>
+            {linhaTotal && (
+              <tr className="bg-[#FAFAFC] font-semibold">
+                <td className="px-3 py-2.5 sticky left-0 bg-[#FAFAFC] whitespace-nowrap">{linhaTotal.label}</td>
+                {linhaTotal.valores.map((v, i) => (
+                  <td key={i} className="px-2 py-2.5 text-right whitespace-nowrap">{formatar(v)}</td>
+                ))}
+                <td className="px-3 py-2.5 text-right whitespace-nowrap">{formatar(linhaTotal.total)}</td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -126,13 +154,14 @@ export default function KeyFiguresPage() {
   const [propostasPorMes, setPropostasPorMes] = useState<number[]>(Array(12).fill(0));
   const [adjudicadosPorMes, setAdjudicadosPorMes] = useState<number[]>(Array(12).fill(0));
   const [linhasEspaco, setLinhasEspaco] = useState<LinhaEspacoKF[]>([]);
-  const [balancoEspaco, setBalancoEspaco] = useState<{ total: number; budget: number }>({ total: 0, budget: 0 });
-  const [porComercial, setPorComercial] = useState<LinhaDim[]>([]);
-  const [porOperacao, setPorOperacao] = useState<{ label: string; vendas: number }[]>([]);
-  const [porEspacoDetalhe, setPorEspacoDetalhe] = useState<LinhaDim[]>([]);
-  const [porSegmento, setPorSegmento] = useState<LinhaDim[]>([]);
-  const [porSource, setPorSource] = useState<LinhaDim[]>([]);
+
+  const [mapaComercial, setMapaComercial] = useState<LinhaDimMensal[]>([]);
+  const [mapaOperacao, setMapaOperacao] = useState<LinhaMensal[]>([]);
+  const [mapaEspaco, setMapaEspaco] = useState<LinhaDimMensal[]>([]);
+  const [mapaSegmento, setMapaSegmento] = useState<LinhaDimMensal[]>([]);
+  const [mapaSource, setMapaSource] = useState<LinhaDimMensal[]>([]);
   const [faturacao2026, setFaturacao2026] = useState({ faturacao: 0, pax: 0, eventos: 0 });
+  const [semSource, setSemSource] = useState(0);
 
   useEffect(() => {
     async function carregar() {
@@ -150,8 +179,9 @@ export default function KeyFiguresPage() {
       // O Supabase limita cada pedido a um máximo de linhas (normalmente 1000),
       // independentemente do .limit() pedido — por isso paginamos com .range()
       // até trazer o ano inteiro (aqui já vão mais de 2500 eventos em 2026).
-      const data: { data: string; status: string; proveito: number | null; fatura: number | null }[] = [];
       const TAMANHO_PAGINA = 1000;
+
+      const data: { data: string; status: string; proveito: number | null; fatura: number | null }[] = [];
       for (let pagina = 0; ; pagina++) {
         const inicio = pagina * TAMANHO_PAGINA;
         const { data: lote, error } = await supabase
@@ -248,10 +278,9 @@ export default function KeyFiguresPage() {
         { label: "Outside Catering", valores: outsideCatering, total: soma(outsideCatering), budgetTotal: soma(BUDGET_2026.outsideCatering) },
         { label: "Total VN", valores: totalVN, total: soma(totalVN), budgetTotal: soma(totalBudget) },
       ]);
-      setBalancoEspaco({ total: soma(totalVN), budget: soma(totalBudget) });
 
-      // Terceiro pedido: traz tudo o resto (segmento, espaço detalhado, source, comerciais,
-      // operação, pax) numa só passagem, para as tabelas de análise por dimensão.
+      // Quarto pedido: traz tudo o resto (segmento, espaço detalhado, source, comerciais,
+      // operação, pax) numa só passagem, já com o mês de cada evento.
       const dadosDetalhe: any[] = [];
       for (let pagina = 0; ; pagina++) {
         const inicio = pagina * TAMANHO_PAGINA;
@@ -272,14 +301,16 @@ export default function KeyFiguresPage() {
         if (!lote || lote.length < TAMANHO_PAGINA) break;
       }
 
-      const mapaComercial = new Map<string, LinhaDim>();
-      const mapaOperacao = new Map<string, number>();
-      const mapaEspaco = new Map<string, LinhaDim>();
-      const mapaSegmento = new Map<string, LinhaDim>();
-      const mapaSource = new Map<string, LinhaDim>();
-      let fatTotal = 0, paxTotal = 0, eventosTotal = 0;
+      const mComercial = new Map<string, LinhaDimMensal>();
+      const mOperacao = new Map<string, number[]>();
+      const mEspaco = new Map<string, LinhaDimMensal>();
+      const mSegmento = new Map<string, LinhaDimMensal>();
+      const mSource = new Map<string, LinhaDimMensal>();
+      let fatTotal = 0, paxTotal = 0, eventosTotal = 0, semSourceCount = 0;
 
       for (const r of dadosDetalhe) {
+        const m = mesDe(r.data) - 1;
+        if (m < 0 || m > 11) continue;
         const proveito = Number(r.proveito ?? 0);
         const fat = Number(r.fatura ?? 0);
         const ganho = r.status === "Ganho";
@@ -289,43 +320,49 @@ export default function KeyFiguresPage() {
         eventosTotal += 1;
 
         const comercialLabel = (r.pipeline_comerciais ?? []).map((pc: any) => pc.utilizadores?.nome).filter(Boolean).join(" / ") || "Sem comercial";
-        if (!mapaComercial.has(comercialLabel)) mapaComercial.set(comercialLabel, novaLinhaDim(comercialLabel));
-        const lc = mapaComercial.get(comercialLabel)!;
-        lc.propostas += proveito;
-        lc.numPropostas += 1;
-        lc.volumeNegocios += fat;
-        if (ganho) lc.vendas += proveito;
+        if (!mComercial.has(comercialLabel)) mComercial.set(comercialLabel, novaLinhaDimMensal(comercialLabel));
+        const lc = mComercial.get(comercialLabel)!;
+        lc.propostas[m] += proveito;
+        lc.numPropostas[m] += 1;
+        lc.volumeNegocios[m] += fat;
+        if (ganho) lc.vendas[m] += proveito;
 
         const operacaoLabel = r.operacao || "Sem operação";
-        mapaOperacao.set(operacaoLabel, (mapaOperacao.get(operacaoLabel) ?? 0) + (ganho ? proveito : 0));
+        if (!mOperacao.has(operacaoLabel)) mOperacao.set(operacaoLabel, Array(12).fill(0));
+        if (ganho) mOperacao.get(operacaoLabel)![m] += proveito;
 
         const espacoLabel = r.categorias_espaco?.nome || "Sem espaço";
-        if (!mapaEspaco.has(espacoLabel)) mapaEspaco.set(espacoLabel, novaLinhaDim(espacoLabel));
-        const le = mapaEspaco.get(espacoLabel)!;
-        le.propostas += proveito;
-        if (ganho) le.vendas += proveito;
+        if (!mEspaco.has(espacoLabel)) mEspaco.set(espacoLabel, novaLinhaDimMensal(espacoLabel));
+        const le = mEspaco.get(espacoLabel)!;
+        le.propostas[m] += proveito;
+        if (ganho) le.vendas[m] += proveito;
 
         const segmentoLabel = r.segmentos?.nome || "Sem segmento";
-        if (!mapaSegmento.has(segmentoLabel)) mapaSegmento.set(segmentoLabel, novaLinhaDim(segmentoLabel));
-        const ls = mapaSegmento.get(segmentoLabel)!;
-        ls.propostas += proveito;
-        ls.volumeNegocios += fat;
-        if (ganho) ls.vendas += proveito;
+        if (!mSegmento.has(segmentoLabel)) mSegmento.set(segmentoLabel, novaLinhaDimMensal(segmentoLabel));
+        const ls = mSegmento.get(segmentoLabel)!;
+        ls.propostas[m] += proveito;
+        ls.volumeNegocios[m] += fat;
+        if (ganho) ls.vendas[m] += proveito;
 
         const sourceLabel = r.sources?.nome || "Sem source";
-        if (!mapaSource.has(sourceLabel)) mapaSource.set(sourceLabel, novaLinhaDim(sourceLabel));
-        const lso = mapaSource.get(sourceLabel)!;
-        lso.propostas += proveito;
-        if (ganho) lso.vendas += proveito;
+        if (sourceLabel === "Sem source") semSourceCount += 1;
+        if (!mSource.has(sourceLabel)) mSource.set(sourceLabel, novaLinhaDimMensal(sourceLabel));
+        const lso = mSource.get(sourceLabel)!;
+        lso.propostas[m] += proveito;
+        if (ganho) lso.vendas[m] += proveito;
       }
 
-      const ordenarPorVendas = (a: LinhaDim, b: LinhaDim) => b.vendas - a.vendas;
-      setPorComercial(Array.from(mapaComercial.values()).sort(ordenarPorVendas));
-      setPorOperacao(Array.from(mapaOperacao.entries()).map(([label, vendas]) => ({ label, vendas })).sort((a, b) => b.vendas - a.vendas));
-      setPorEspacoDetalhe(Array.from(mapaEspaco.values()).sort(ordenarPorVendas));
-      setPorSegmento(Array.from(mapaSegmento.values()).sort(ordenarPorVendas));
-      setPorSource(Array.from(mapaSource.values()).sort(ordenarPorVendas));
+      setMapaComercial(Array.from(mComercial.values()));
+      setMapaOperacao(
+        Array.from(mOperacao.entries())
+          .map(([label, valores]) => ({ label, valores, total: soma(valores) }))
+          .sort((a, b) => (b.total ?? 0) - (a.total ?? 0))
+      );
+      setMapaEspaco(Array.from(mEspaco.values()));
+      setMapaSegmento(Array.from(mSegmento.values()));
+      setMapaSource(Array.from(mSource.values()));
       setFaturacao2026({ faturacao: fatTotal, pax: paxTotal, eventos: eventosTotal });
+      setSemSource(semSourceCount);
 
       setCarregado(true);
     }
@@ -471,7 +508,7 @@ export default function KeyFiguresPage() {
           </div>
           <div>
             <p className="text-xs text-[#6B6B76]"># Pax</p>
-            <p className="text-lg font-medium">{faturacao2026.pax.toLocaleString("pt-PT")}</p>
+            <p className="text-lg font-medium">{formatInt(faturacao2026.pax)}</p>
           </div>
           <div>
             <p className="text-xs text-[#6B6B76]">Val. Evento</p>
@@ -487,60 +524,62 @@ export default function KeyFiguresPage() {
         </p>
       </div>
 
-      <TabelaDim
-        titulo="Vendas por Comercial"
-        linhas={porComercial}
-        mostrarNumPropostas
-        mostrarVolumeNegocios
+      {/* --- Por Comercial --- */}
+      <TabelaMensal titulo="Vendas por Comercial" colunaLabel="Comercial" linhas={paraLinhasMensais(mapaComercial, "vendas")} linhaTotal={linhaTotalSoma(paraLinhasMensais(mapaComercial, "vendas"))} />
+      <TabelaMensal titulo="Propostas por Comercial" colunaLabel="Comercial" linhas={paraLinhasMensais(mapaComercial, "propostas")} linhaTotal={linhaTotalSoma(paraLinhasMensais(mapaComercial, "propostas"))} />
+      <TabelaMensal titulo="Nº de Propostas por Comercial" colunaLabel="Comercial" formato="int" linhas={paraLinhasMensais(mapaComercial, "numPropostas")} linhaTotal={linhaTotalSoma(paraLinhasMensais(mapaComercial, "numPropostas"))} />
+      <TabelaMensal titulo="Volume de Negócios por Comercial" colunaLabel="Comercial" linhas={paraLinhasMensais(mapaComercial, "volumeNegocios")} linhaTotal={linhaTotalSoma(paraLinhasMensais(mapaComercial, "volumeNegocios"))} />
+      <TabelaMensal
+        titulo="Taxa de Conversão por Comercial"
+        colunaLabel="Comercial"
+        formato="pct"
+        linhas={paraLinhasTxConversao(mapaComercial)}
+        linhaTotal={linhaTotalTxConversao(mapaComercial)}
         nota="Agrupado pelo(s) comercial(is) atribuído(s) a cada evento — eventos com mais do que um comercial aparecem juntos (ex.: 'Joana S / Rita A'), tal como no Excel."
       />
 
-      <div className="mb-8">
-        <h2 className="text-lg font-medium mb-2">Execução por Operação</h2>
-        <div className="rounded-xl border border-[#E7E6F0] bg-white overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-[#6B6B76] border-b border-[#E7E6F0]">
-                <th className="px-3 py-3 font-medium">Operação</th>
-                <th className="px-3 py-3 font-medium text-right">Execução (Ganho)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {porOperacao.map((l) => (
-                <tr key={l.label} className="border-b border-[#F1F0F7] last:border-0">
-                  <td className="px-3 py-2.5 font-medium whitespace-nowrap">{l.label}</td>
-                  <td className="px-3 py-2.5 text-right whitespace-nowrap">{formatEUR(l.vendas)}</td>
-                </tr>
-              ))}
-              <tr className="bg-[#FAFAFC] font-semibold">
-                <td className="px-3 py-2.5 whitespace-nowrap">TOTAL</td>
-                <td className="px-3 py-2.5 text-right whitespace-nowrap">{formatEUR(soma(porOperacao.map((l) => l.vendas)))}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {/* --- Execução por Operação --- */}
+      <TabelaMensal
+        titulo="Execução por Operação"
+        colunaLabel="Operação"
+        linhas={mapaOperacao}
+        linhaTotal={linhaTotalSoma(mapaOperacao)}
+      />
 
-      <TabelaDim
-        titulo="Vendas por Espaço (detalhe)"
-        linhas={porEspacoDetalhe}
+      {/* --- Por Espaço (detalhe) --- */}
+      <TabelaMensal titulo="Vendas por Espaço (detalhe)" colunaLabel="Espaço" linhas={paraLinhasMensais(mapaEspaco, "vendas")} linhaTotal={linhaTotalSoma(paraLinhasMensais(mapaEspaco, "vendas"))} />
+      <TabelaMensal titulo="Propostas por Espaço (detalhe)" colunaLabel="Espaço" linhas={paraLinhasMensais(mapaEspaco, "propostas")} linhaTotal={linhaTotalSoma(paraLinhasMensais(mapaEspaco, "propostas"))} />
+      <TabelaMensal
+        titulo="Taxa de Conversão por Espaço (detalhe)"
+        colunaLabel="Espaço"
+        formato="pct"
+        linhas={paraLinhasTxConversao(mapaEspaco)}
+        linhaTotal={linhaTotalTxConversao(mapaEspaco)}
         nota="As 7 categorias de espaço em separado, sem o agrupamento 'Outside Catering' usado no mapa de orçamento acima."
       />
 
-      <TabelaDim
-        titulo="Vendas por Segmento"
-        linhas={porSegmento}
-        mostrarVolumeNegocios
+      {/* --- Por Segmento --- */}
+      <TabelaMensal titulo="Vendas por Segmento" colunaLabel="Segmento" linhas={paraLinhasMensais(mapaSegmento, "vendas")} linhaTotal={linhaTotalSoma(paraLinhasMensais(mapaSegmento, "vendas"))} />
+      <TabelaMensal titulo="Propostas por Segmento" colunaLabel="Segmento" linhas={paraLinhasMensais(mapaSegmento, "propostas")} linhaTotal={linhaTotalSoma(paraLinhasMensais(mapaSegmento, "propostas"))} />
+      <TabelaMensal
+        titulo="Taxa de Conversão por Segmento"
+        colunaLabel="Segmento"
+        formato="pct"
+        linhas={paraLinhasTxConversao(mapaSegmento)}
+        linhaTotal={linhaTotalTxConversao(mapaSegmento)}
       />
+      <TabelaMensal titulo="Volume de Negócios por Segmento" colunaLabel="Segmento" linhas={paraLinhasMensais(mapaSegmento, "volumeNegocios")} linhaTotal={linhaTotalSoma(paraLinhasMensais(mapaSegmento, "volumeNegocios"))} />
 
-      <TabelaDim
-        titulo="Angariação por Source"
-        linhas={porSource}
-        nota={
-          porSource.some((l) => l.label === "Sem source" && (l.vendas > 0 || l.propostas > 0))
-            ? "Alguns eventos ainda não têm Source associado (importados antes de existir esse campo) — corre a migração 006 para preencher o histórico."
-            : undefined
-        }
+      {/* --- Por Source --- */}
+      <TabelaMensal titulo="Vendas por Source" colunaLabel="Source" linhas={paraLinhasMensais(mapaSource, "vendas")} linhaTotal={linhaTotalSoma(paraLinhasMensais(mapaSource, "vendas"))} />
+      <TabelaMensal titulo="Propostas por Source" colunaLabel="Source" linhas={paraLinhasMensais(mapaSource, "propostas")} linhaTotal={linhaTotalSoma(paraLinhasMensais(mapaSource, "propostas"))} />
+      <TabelaMensal
+        titulo="Taxa de Conversão por Source"
+        colunaLabel="Source"
+        formato="pct"
+        linhas={paraLinhasTxConversao(mapaSource)}
+        linhaTotal={linhaTotalTxConversao(mapaSource)}
+        nota={semSource > 0 ? `${semSource} eventos ainda sem Source associado (importados antes de existir esse campo) — corre a migração 006 para preencher o histórico.` : undefined}
       />
     </main>
   );
