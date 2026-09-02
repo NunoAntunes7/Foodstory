@@ -48,6 +48,75 @@ function mesDe(dataStr: string) {
 
 type LinhaKF = { label: string; valores: number[]; total: number; ref2025Total: number };
 type LinhaEspacoKF = { label: string; valores: number[]; total: number; budgetTotal: number };
+type LinhaDim = { label: string; vendas: number; propostas: number; numPropostas: number; volumeNegocios: number };
+
+function novaLinhaDim(label: string): LinhaDim {
+  return { label, vendas: 0, propostas: 0, numPropostas: 0, volumeNegocios: 0 };
+}
+function txConversao(vendas: number, propostas: number) {
+  return propostas !== 0 ? vendas / propostas : null;
+}
+
+function TabelaDim({
+  titulo, linhas, mostrarNumPropostas, mostrarVolumeNegocios, nota,
+}: {
+  titulo: string;
+  linhas: LinhaDim[];
+  mostrarNumPropostas?: boolean;
+  mostrarVolumeNegocios?: boolean;
+  nota?: string;
+}) {
+  const totais = linhas.reduce(
+    (acc, l) => ({
+      vendas: acc.vendas + l.vendas,
+      propostas: acc.propostas + l.propostas,
+      numPropostas: acc.numPropostas + l.numPropostas,
+      volumeNegocios: acc.volumeNegocios + l.volumeNegocios,
+    }),
+    { vendas: 0, propostas: 0, numPropostas: 0, volumeNegocios: 0 }
+  );
+
+  return (
+    <div className="mb-8">
+      <h2 className="text-lg font-medium mb-2">{titulo}</h2>
+      <div className="rounded-xl border border-[#E7E6F0] bg-white overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-[#6B6B76] border-b border-[#E7E6F0]">
+              <th className="px-3 py-3 font-medium">Nome</th>
+              <th className="px-3 py-3 font-medium text-right">Vendas (Ganho)</th>
+              <th className="px-3 py-3 font-medium text-right">Propostas</th>
+              {mostrarNumPropostas && <th className="px-3 py-3 font-medium text-right">Nº Propostas</th>}
+              {mostrarVolumeNegocios && <th className="px-3 py-3 font-medium text-right">Volume Negócios (Fatura)</th>}
+              <th className="px-3 py-3 font-medium text-right">Tx. Conversão</th>
+            </tr>
+          </thead>
+          <tbody>
+            {linhas.map((l) => (
+              <tr key={l.label} className="border-b border-[#F1F0F7] last:border-0">
+                <td className="px-3 py-2.5 font-medium whitespace-nowrap">{l.label}</td>
+                <td className="px-3 py-2.5 text-right whitespace-nowrap">{formatEUR(l.vendas)}</td>
+                <td className="px-3 py-2.5 text-right text-[#6B6B76] whitespace-nowrap">{formatEUR(l.propostas)}</td>
+                {mostrarNumPropostas && <td className="px-3 py-2.5 text-right text-[#6B6B76] whitespace-nowrap">{l.numPropostas}</td>}
+                {mostrarVolumeNegocios && <td className="px-3 py-2.5 text-right text-[#6B6B76] whitespace-nowrap">{formatEUR(l.volumeNegocios)}</td>}
+                <td className="px-3 py-2.5 text-right whitespace-nowrap">{formatPct(txConversao(l.vendas, l.propostas))}</td>
+              </tr>
+            ))}
+            <tr className="bg-[#FAFAFC] font-semibold">
+              <td className="px-3 py-2.5 whitespace-nowrap">TOTAL</td>
+              <td className="px-3 py-2.5 text-right whitespace-nowrap">{formatEUR(totais.vendas)}</td>
+              <td className="px-3 py-2.5 text-right whitespace-nowrap">{formatEUR(totais.propostas)}</td>
+              {mostrarNumPropostas && <td className="px-3 py-2.5 text-right whitespace-nowrap">{totais.numPropostas}</td>}
+              {mostrarVolumeNegocios && <td className="px-3 py-2.5 text-right whitespace-nowrap">{formatEUR(totais.volumeNegocios)}</td>}
+              <td className="px-3 py-2.5 text-right whitespace-nowrap">{formatPct(txConversao(totais.vendas, totais.propostas))}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      {nota && <p className="text-xs text-[#6B6B76] mt-2">{nota}</p>}
+    </div>
+  );
+}
 
 export default function KeyFiguresPage() {
   const router = useRouter();
@@ -58,6 +127,12 @@ export default function KeyFiguresPage() {
   const [adjudicadosPorMes, setAdjudicadosPorMes] = useState<number[]>(Array(12).fill(0));
   const [linhasEspaco, setLinhasEspaco] = useState<LinhaEspacoKF[]>([]);
   const [balancoEspaco, setBalancoEspaco] = useState<{ total: number; budget: number }>({ total: 0, budget: 0 });
+  const [porComercial, setPorComercial] = useState<LinhaDim[]>([]);
+  const [porOperacao, setPorOperacao] = useState<{ label: string; vendas: number }[]>([]);
+  const [porEspacoDetalhe, setPorEspacoDetalhe] = useState<LinhaDim[]>([]);
+  const [porSegmento, setPorSegmento] = useState<LinhaDim[]>([]);
+  const [porSource, setPorSource] = useState<LinhaDim[]>([]);
+  const [faturacao2026, setFaturacao2026] = useState({ faturacao: 0, pax: 0, eventos: 0 });
 
   useEffect(() => {
     async function carregar() {
@@ -174,6 +249,83 @@ export default function KeyFiguresPage() {
         { label: "Total VN", valores: totalVN, total: soma(totalVN), budgetTotal: soma(totalBudget) },
       ]);
       setBalancoEspaco({ total: soma(totalVN), budget: soma(totalBudget) });
+
+      // Terceiro pedido: traz tudo o resto (segmento, espaço detalhado, source, comerciais,
+      // operação, pax) numa só passagem, para as tabelas de análise por dimensão.
+      const dadosDetalhe: any[] = [];
+      for (let pagina = 0; ; pagina++) {
+        const inicio = pagina * TAMANHO_PAGINA;
+        const { data: lote, error } = await supabase
+          .from("pipeline")
+          .select(
+            `data, status, proveito, fatura, n_pax, operacao,
+             segmentos(nome), categorias_espaco(nome), sources(nome),
+             pipeline_comerciais(utilizadores(nome))`
+          )
+          .gte("data", "2026-01-01")
+          .lt("data", "2027-01-01")
+          .order("data", { ascending: true })
+          .range(inicio, inicio + TAMANHO_PAGINA - 1);
+
+        if (error) break;
+        dadosDetalhe.push(...(((lote as any[]) ?? []) as any));
+        if (!lote || lote.length < TAMANHO_PAGINA) break;
+      }
+
+      const mapaComercial = new Map<string, LinhaDim>();
+      const mapaOperacao = new Map<string, number>();
+      const mapaEspaco = new Map<string, LinhaDim>();
+      const mapaSegmento = new Map<string, LinhaDim>();
+      const mapaSource = new Map<string, LinhaDim>();
+      let fatTotal = 0, paxTotal = 0, eventosTotal = 0;
+
+      for (const r of dadosDetalhe) {
+        const proveito = Number(r.proveito ?? 0);
+        const fat = Number(r.fatura ?? 0);
+        const ganho = r.status === "Ganho";
+
+        fatTotal += fat;
+        paxTotal += Number(r.n_pax ?? 0);
+        eventosTotal += 1;
+
+        const comercialLabel = (r.pipeline_comerciais ?? []).map((pc: any) => pc.utilizadores?.nome).filter(Boolean).join(" / ") || "Sem comercial";
+        if (!mapaComercial.has(comercialLabel)) mapaComercial.set(comercialLabel, novaLinhaDim(comercialLabel));
+        const lc = mapaComercial.get(comercialLabel)!;
+        lc.propostas += proveito;
+        lc.numPropostas += 1;
+        lc.volumeNegocios += fat;
+        if (ganho) lc.vendas += proveito;
+
+        const operacaoLabel = r.operacao || "Sem operação";
+        mapaOperacao.set(operacaoLabel, (mapaOperacao.get(operacaoLabel) ?? 0) + (ganho ? proveito : 0));
+
+        const espacoLabel = r.categorias_espaco?.nome || "Sem espaço";
+        if (!mapaEspaco.has(espacoLabel)) mapaEspaco.set(espacoLabel, novaLinhaDim(espacoLabel));
+        const le = mapaEspaco.get(espacoLabel)!;
+        le.propostas += proveito;
+        if (ganho) le.vendas += proveito;
+
+        const segmentoLabel = r.segmentos?.nome || "Sem segmento";
+        if (!mapaSegmento.has(segmentoLabel)) mapaSegmento.set(segmentoLabel, novaLinhaDim(segmentoLabel));
+        const ls = mapaSegmento.get(segmentoLabel)!;
+        ls.propostas += proveito;
+        ls.volumeNegocios += fat;
+        if (ganho) ls.vendas += proveito;
+
+        const sourceLabel = r.sources?.nome || "Sem source";
+        if (!mapaSource.has(sourceLabel)) mapaSource.set(sourceLabel, novaLinhaDim(sourceLabel));
+        const lso = mapaSource.get(sourceLabel)!;
+        lso.propostas += proveito;
+        if (ganho) lso.vendas += proveito;
+      }
+
+      const ordenarPorVendas = (a: LinhaDim, b: LinhaDim) => b.vendas - a.vendas;
+      setPorComercial(Array.from(mapaComercial.values()).sort(ordenarPorVendas));
+      setPorOperacao(Array.from(mapaOperacao.entries()).map(([label, vendas]) => ({ label, vendas })).sort((a, b) => b.vendas - a.vendas));
+      setPorEspacoDetalhe(Array.from(mapaEspaco.values()).sort(ordenarPorVendas));
+      setPorSegmento(Array.from(mapaSegmento.values()).sort(ordenarPorVendas));
+      setPorSource(Array.from(mapaSource.values()).sort(ordenarPorVendas));
+      setFaturacao2026({ faturacao: fatTotal, pax: paxTotal, eventos: eventosTotal });
 
       setCarregado(true);
     }
@@ -305,6 +457,91 @@ export default function KeyFiguresPage() {
         Outside Catering = tudo o que não é CCB, Regium ou Vandelli (Monsanto, Rive Rouge, Parceiros, Esp. Externos e
         outros). Orçamento = metas fixadas no início do ano (não vem do Pipeline). Balanço = Total 2026 − Orçamento.
       </p>
+
+      <div className="rounded-xl border border-[#E7E6F0] bg-white p-5 mb-8">
+        <h2 className="text-sm font-medium mb-4">Faturação 2026</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+          <div>
+            <p className="text-xs text-[#6B6B76]">Faturação</p>
+            <p className="text-lg font-medium">{formatEUR(faturacao2026.faturacao)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-[#6B6B76]"># Eventos</p>
+            <p className="text-lg font-medium">{faturacao2026.eventos}</p>
+          </div>
+          <div>
+            <p className="text-xs text-[#6B6B76]"># Pax</p>
+            <p className="text-lg font-medium">{faturacao2026.pax.toLocaleString("pt-PT")}</p>
+          </div>
+          <div>
+            <p className="text-xs text-[#6B6B76]">Val. Evento</p>
+            <p className="text-lg font-medium">{formatEUR(faturacao2026.eventos ? faturacao2026.faturacao / faturacao2026.eventos : 0)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-[#6B6B76]">Val. Pax</p>
+            <p className="text-lg font-medium">{formatEUR(faturacao2026.pax ? faturacao2026.faturacao / faturacao2026.pax : 0)}</p>
+          </div>
+        </div>
+        <p className="text-xs text-[#6B6B76] mt-3">
+          Faturação = soma do campo Fatura de todos os eventos de 2026 (qualquer estado), tal como na linha "Faturado".
+        </p>
+      </div>
+
+      <TabelaDim
+        titulo="Vendas por Comercial"
+        linhas={porComercial}
+        mostrarNumPropostas
+        mostrarVolumeNegocios
+        nota="Agrupado pelo(s) comercial(is) atribuído(s) a cada evento — eventos com mais do que um comercial aparecem juntos (ex.: 'Joana S / Rita A'), tal como no Excel."
+      />
+
+      <div className="mb-8">
+        <h2 className="text-lg font-medium mb-2">Execução por Operação</h2>
+        <div className="rounded-xl border border-[#E7E6F0] bg-white overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-[#6B6B76] border-b border-[#E7E6F0]">
+                <th className="px-3 py-3 font-medium">Operação</th>
+                <th className="px-3 py-3 font-medium text-right">Execução (Ganho)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {porOperacao.map((l) => (
+                <tr key={l.label} className="border-b border-[#F1F0F7] last:border-0">
+                  <td className="px-3 py-2.5 font-medium whitespace-nowrap">{l.label}</td>
+                  <td className="px-3 py-2.5 text-right whitespace-nowrap">{formatEUR(l.vendas)}</td>
+                </tr>
+              ))}
+              <tr className="bg-[#FAFAFC] font-semibold">
+                <td className="px-3 py-2.5 whitespace-nowrap">TOTAL</td>
+                <td className="px-3 py-2.5 text-right whitespace-nowrap">{formatEUR(soma(porOperacao.map((l) => l.vendas)))}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <TabelaDim
+        titulo="Vendas por Espaço (detalhe)"
+        linhas={porEspacoDetalhe}
+        nota="As 7 categorias de espaço em separado, sem o agrupamento 'Outside Catering' usado no mapa de orçamento acima."
+      />
+
+      <TabelaDim
+        titulo="Vendas por Segmento"
+        linhas={porSegmento}
+        mostrarVolumeNegocios
+      />
+
+      <TabelaDim
+        titulo="Angariação por Source"
+        linhas={porSource}
+        nota={
+          porSource.some((l) => l.label === "Sem source" && (l.vendas > 0 || l.propostas > 0))
+            ? "Alguns eventos ainda não têm Source associado (importados antes de existir esse campo) — corre a migração 006 para preencher o histórico."
+            : undefined
+        }
+      />
     </main>
   );
 }
